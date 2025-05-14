@@ -1,3 +1,3 @@
 ## POLICY-EVALUATION
 
-All code + data required to perform thesis analisys.
+All code + data required to perform thesis analysis.
