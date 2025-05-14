@@ -13,6 +13,8 @@ $PSDefaultParameterValues = @{
     'Add-Member:PassThru'   = $true
 }
 
+$PSStyle.OutputRendering = 'Ansi'
+
 
 
 #region -- Declare: $Logging --
