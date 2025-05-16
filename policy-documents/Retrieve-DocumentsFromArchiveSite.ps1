@@ -40,7 +40,7 @@ $global:Logging = [PSCustomObject]::new()
         $S = $PSStyle.Foreground.White + $PSStyle.Italic
         $R = $PSStyle.Reset
 
-        Write-Information $($S + " - Search[$MaximumPageNr] => Got results from page $CurrentPageNr" + $R)
+        Write-Information $("`n`n`n$S - Search[$MaximumPageNr] => Got results from page $CurrentPageNr" + $R)
     }
 
     Add-LoggingMethod 'Info_PathDetermined' -Method {
@@ -349,11 +349,11 @@ while (-not $Search.HasFinishedPages) {
         Where-Object href -Match '^http(s)?:/' |
         Get-TargetInfoFromSourceUri |
         Save-TargetFileFromArchiveSite |
-        Invoke-ScriptForEachBatch -BatchSize 300 -TargetScript {
+        Invoke-ScriptForEachBatch -BatchSize 30 -TargetScript {
 
             param([int] $BatchIndex, [object[]] $BatchItems)
 
-            git add -A
+            git add --all
             git commit -m "Added batch #$BatchIndex of policy-docs (total: $($BatchItems.Count)"
         }
 }
