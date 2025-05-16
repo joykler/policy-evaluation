@@ -349,7 +349,7 @@ while (-not $Search.HasFinishedPages) {
         Where-Object href -Match '^http(s)?:/' |
         Get-TargetInfoFromSourceUri |
         Save-TargetFileFromArchiveSite |
-        Invoke-ScriptForEachBatch -BatchSize 3 -TargetScript {
+        Invoke-ScriptForEachBatch -BatchSize 300 -TargetScript {
 
             param([int] $BatchIndex, [object[]] $BatchItems)
 
