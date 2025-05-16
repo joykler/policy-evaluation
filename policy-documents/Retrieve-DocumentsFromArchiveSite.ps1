@@ -76,13 +76,24 @@ $global:Logging = [PSCustomObject]::new()
         Write-Warning $($S + " ! File allready exists: $F[ $dir_relpath ]> $file" + $R)
     }
 
-    Add-LoggingMethod 'Warn_ConnectionFailedRetryingAfterSleep' -Method {
+    Add-LoggingMethod 'Warn_ConnectionFailed' -Method {
 
         $S = $PSStyle.Foreground.BrightYellow + $PSStyle.Bold
         $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
         $R = $PSStyle.Reset
 
         Write-Warning $($S + " ! Connection error: $F retrying after sleep..." + $R)
+    }
+
+    Add-LoggingMethod 'Info_ScriptInvokedForBatch' -Method {
+
+        param([int] $BatchIndex, [int] $BatchItemsCount)
+
+        $S = $PSStyle.Foreground.BrightBlue + $PSStyle.Bold
+        $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
+        $R = $PSStyle.Reset
+
+        Write-Information $($S + " ! Script invoked: $F for batch [Index: $BatchIndex; Items: $BatchItemsCount]..." + $R)
     }
 
 }
@@ -177,73 +188,172 @@ function New-Search ([int] $StartFromPageNr = 1) {
 
 
 
-$Logging.Info_StartedDownloadingAllFiles()
+#region -- Declare: Get-TargetInfoFromSourceUri --
+function Get-TargetInfoFromSourceUri {
 
+    [CmdletBinding()]
+    param(
+        [Alias('href')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [String] $SourceUri
+    )
+
+    process {
+        if ($SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
+
+            $parsed = @{
+                dir  = $Matches.DIR
+                file = $Matches.FILE
+            }
+
+            $changed = @{}
+            foreach ($item in $parsed.GetEnumerator()) {
+                $value = [uri]::UnescapeDataString($item.Value)
+                $value = $value -replace 'beleidsnota-s', 'beleidsnotas'
+
+                $changed.Add($item.Key, $value)
+            }
+
+            $file_name = $changed.File
+            $file_base = [System.IO.Path]::GetFileNameWithoutExtension($file_name)
+
+            $dir_relpath = $changed.Dir -replace "/$([regex]::Escape($file_base))", ''
+            $dir_abspath = Join-Path "\?\$PSScriptRoot\Archive" -ChildPath $dir_relpath
+
+            $TargetDir = [PSCustomObject] @{
+                RelPath = $dir_relpath
+                AbsPath = $dir_abspath
+            }
+
+            $TargetFile = [PSCustomObject] @{
+                Name    = $file_name
+                AbsPath = Join-Path $dir_abspath -ChildPath $file_name
+            }
+
+            $Logging.Info_PathDetermined($dir_relpath, $file_name)
+            return [PSCustomObject] @{
+                SourceUri  = $SourceUri
+                TargetDir  = $TargetDir
+                TargetFile = $TargetFile
+            }
+        }
+    }
+}
+#endregion
+
+#region -- Declare: Save-TargetFileFromArchiveSite --
+function Save-TargetFileFromArchiveSite {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [PSCustomObject] $SourceUri,
+
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [PSCustomObject] $TargetDir,
+
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [PSCustomObject] $TargetFile
+    )
+
+    process {
+        try {
+            if (-not $(Test-Path $TargetDir.AbsPath)) {
+                mkdir $TargetDir.AbsPath -ErrorAction Ignore | Out-Null
+            }
+
+            if ($(Test-Path $TargetFile.AbsPath -PathType Leaf)) {
+                $Logging.Warn_FileAllreadyExists($TargetDir.RelPath, $TargetFile.Name)
+
+            } else {
+                try {
+                    Invoke-WebRequest -Uri $SourceUri -OutFile $TargetFile.AbsPath -TimeoutSec 0
+                    $Logging.Info_FileDownloaded($TargetDir.RelPath, $TargetFile.Name)
+                    return $TargetFile
+
+                } catch [Http.HttpRequestException] {
+                    if ($_.Exception.HttpRequestError -eq 'ConnectionError') {
+                        $Logging.Warn_ConnectionFailed()
+
+                        Start-Sleep -Seconds 3
+
+                        Invoke-WebRequest -Uri $SourceUri -OutFile $TargetFile.AbsPath -TimeoutSec 0
+                        $Logging.Info_FileDownloaded($TargetDir.RelPath, $TargetFile.Name)
+                        return $TargetFile
+
+                    } else {
+                        throw $_
+                    }
+                }
+            }
+
+        } catch {
+            Write-Error $_ -ErrorAction Continue
+        }
+    }
+}
+#endregion
+
+#region -- Declare: Invoke-ScriptForEachBatch --
+function Invoke-ScriptForEachBatch {
+
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [PSCustomObject] $SourceItem,
+
+        [Parameter(Mandatory)]
+        [int] $BatchSize,
+
+        [Parameter(Mandatory)]
+        [scriptblock] $TargetScript
+    )
+
+    begin {
+        $Batch = [PSCustomObject] @{
+            Index = 0
+            Items = [System.Collections.Generic.List[PSCustomObject]]::new($BatchSize)
+        }
+    }
+
+    process {
+        $Batch.Items.Add($SourceItem)
+
+        if ($Batch.Items.Count -gt $BatchSize) {
+
+            $Logging.Info_ScriptInvokedForBatch($Batch.Index, $Batch.Items.Count)
+            $TargetScript.Invoke($Batch.Index, $Batch.Items)
+
+            $Batch.Index++
+            $Batch.Items = [System.Collections.Generic.List[PSCustomObject]]::new($BatchSize)
+        }
+    }
+
+    end {
+        if ($BatchedItems.Count) {
+
+            $Logging.Info_ScriptInvokedForBatch($Batch.Index, $Batch.Items.Count)
+            $TargetScript.Invoke($Batch.Index, $Batch.Items)
+        }
+    }
+}
+#endregion
+
+
+$Logging.Info_StartedDownloadingAllFiles()
 $Search = New-Search -StartFromPageNr 1
+
 while (-not $Search.HasFinishedPages) {
 
     $Search.GetResultsFromNextPage() |
         Where-Object href -Match '^http(s)?:/' |
-        ForEach-Object href |
-        Where-Object {
-            $_ -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$'
-        } |
-        ForEach-Object {
-            try {
-                $href = $_
+        Get-TargetInfoFromSourceUri |
+        Save-TargetFileFromArchiveSite |
+        Invoke-ScriptForEachBatch -BatchSize 300 -TargetScript {
 
-                $parsed = @{
-                    dir  = $Matches.DIR
-                    file = $Matches.FILE
-                }
+            param([int] $BatchIndex, [object[]] $BatchItems)
 
-                $changed = @{}
-                foreach ($item in $parsed.GetEnumerator()) {
-                    $value = [uri]::UnescapeDataString($item.Value)
-
-                    $value = $value -replace 'beleidsnota-s', 'beleidsnotas'
-
-                    $changed.Add($item.Key, $value)
-                }
-
-                $file = $changed.file
-                $file_base = [System.IO.Path]::GetFileNameWithoutExtension($file)
-
-                $dir_relpath = $changed.dir -replace "/$([regex]::Escape($file_base))", ''
-                $dir_abspath = Join-Path "$PSScriptRoot\Archive" -ChildPath $dir_relpath
-
-                $file_abspath = Join-Path $dir_abspath -ChildPath $file
-                $Logging.Info_PathDetermined($dir_relpath, $file)
-
-                if (-not $(Test-Path $dir_abspath)) {
-                    mkdir $dir_abspath -ErrorAction Ignore | Out-Null
-                }
-
-                if ($(Test-Path $file_abspath -PathType Leaf)) {
-                    $Logging.Warn_FileAllreadyExists($dir_relpath, $file)
-
-                } else {
-                    try {
-                        Invoke-WebRequest -Uri $href -OutFile $file_abspath -TimeoutSec 0
-                        $Logging.Info_FileDownloaded($dir_relpath, $file)
-
-                    } catch [Http.HttpRequestException] {
-                        if ($_.Exception.HttpRequestError -eq 'ConnectionError') {
-                            $Logging.Warn_ConnectionFailedRetryingAfterSleep()
-
-                            Start-Sleep -Seconds 3
-
-                            Invoke-WebRequest -Uri $href -OutFile $file_abspath -TimeoutSec 0
-                            $Logging.Info_FileDownloaded($dir_relpath, $file)
-
-                        } else {
-                            throw $_
-                        }
-                    }
-                }
-
-            } catch {
-                Write-Error $_ -ErrorAction Continue
-            }
+            git add -A
+            git commit -m "Added batch #$BatchIndex of policy-docs (total: $($BatchItems.Count)"
         }
 }
