@@ -218,7 +218,7 @@ function Get-TargetInfoFromSourceUri {
             $file_base = [System.IO.Path]::GetFileNameWithoutExtension($file_name)
 
             $dir_relpath = $changed.Dir -replace "/$([regex]::Escape($file_base))", ''
-            $dir_abspath = Join-Path "\?\$PSScriptRoot\Archive" -ChildPath $dir_relpath
+            $dir_abspath = Join-Path "\\?\$PSScriptRoot\Archive" -ChildPath $dir_relpath
 
             $TargetDir = [PSCustomObject] @{
                 RelPath = $dir_relpath
