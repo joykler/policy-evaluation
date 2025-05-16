@@ -319,7 +319,7 @@ function Invoke-ScriptForEachBatch {
     process {
         $Batch.Items.Add($SourceItem)
 
-        if ($Batch.Items.Count -gt $BatchSize) {
+        if ($Batch.Items.Count -ge $BatchSize) {
 
             $Logging.Info_ScriptInvokedForBatch($Batch.Index, $Batch.Items.Count)
             $TargetScript.Invoke($Batch.Index, $Batch.Items)
@@ -349,7 +349,7 @@ while (-not $Search.HasFinishedPages) {
         Where-Object href -Match '^http(s)?:/' |
         Get-TargetInfoFromSourceUri |
         Save-TargetFileFromArchiveSite |
-        Invoke-ScriptForEachBatch -BatchSize 300 -TargetScript {
+        Invoke-ScriptForEachBatch -BatchSize 3 -TargetScript {
 
             param([int] $BatchIndex, [object[]] $BatchItems)
 
