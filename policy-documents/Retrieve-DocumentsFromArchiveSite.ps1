@@ -43,6 +43,17 @@ $global:Logging = [PSCustomObject]::new()
         Write-Information $($S + " - Search[$MaximumPageNr] => Got results from page $CurrentPageNr" + $R)
     }
 
+    Add-LoggingMethod 'Info_PathDetermined' -Method {
+
+        param([string] $dir_relpath, [string] $file)
+
+        $S = $PSStyle.Foreground.BrightCyan + $PSStyle.Bold
+        $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
+        $R = $PSStyle.Reset
+
+        Write-Information $($S + " * Path determined: $F[ $($dir_relpath.Length) ]> $($file.Length)" + $R)
+    }
+
     Add-LoggingMethod 'Info_FileDownloaded' -Method {
 
         param([string] $dir_relpath, [string] $file)
@@ -202,6 +213,7 @@ while (-not $Search.HasFinishedPages) {
                 $dir_abspath = Join-Path "$PSScriptRoot\Archive" -ChildPath $dir_relpath
 
                 $file_abspath = Join-Path $dir_abspath -ChildPath $file
+                $Logging.Info_PathDetermined($dir_relpath, $file)
 
                 if (-not $(Test-Path $dir_abspath)) {
                     mkdir $dir_abspath -ErrorAction Ignore | Out-Null
