@@ -343,17 +343,16 @@ function Invoke-ScriptForEachBatch {
 $Logging.Info_StartedDownloadingAllFiles()
 $Search = New-Search -StartFromPageNr 1
 
-while (-not $Search.HasFinishedPages) {
+@(while (-not $Search.HasFinishedPages) {
+        $Search.GetResultsFromNextPage() 
+    }) |
+    Where-Object href -Match '^http(s)?:/' |
+    Get-TargetInfoFromSourceUri |
+    Save-TargetFileFromArchiveSite |
+    Invoke-ScriptForEachBatch -BatchSize 30 -TargetScript {
 
-    $Search.GetResultsFromNextPage() |
-        Where-Object href -Match '^http(s)?:/' |
-        Get-TargetInfoFromSourceUri |
-        Save-TargetFileFromArchiveSite |
-        Invoke-ScriptForEachBatch -BatchSize 30 -TargetScript {
+        param([int] $BatchIndex, [object[]] $BatchItems)
 
-            param([int] $BatchIndex, [object[]] $BatchItems)
-
-            git add --all
-            git commit -m "Added batch #$BatchIndex of policy-docs (total: $($BatchItems.Count)"
-        }
-}
+        git add --all
+        git commit -m "Added batch #$BatchIndex of policy-docs (total: $($BatchItems.Count)"
+    }
