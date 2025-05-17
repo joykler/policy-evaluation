@@ -87,20 +87,61 @@ $global:Logging = [PSCustomObject]::new()
 
     Add-LoggingMethod 'Info_ScriptInvokedForBatch' -Method {
 
-        param([int] $BatchIndex, [int] $BatchItemsCount)
+        param([int] $BatchNr, [int] $BatchedItemsCount)
 
         $S = $PSStyle.Foreground.BrightBlue + $PSStyle.Bold
         $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
         $R = $PSStyle.Reset
 
-        Write-Information $($S + " ! Script invoked: $F for batch [Index: $BatchIndex; Items: $BatchItemsCount]..." + $R)
+        Write-Information $($S + " ! Script invoked: $F for batch [Index: $BatchNr; Items: $BatchedItemsCount]..." + $R)
     }
 
 }
 #endregion
 
-#region -- Declare: New-Search --
-function New-Search ([int] $StartFromPageNr = 1) {
+#region -- Declare: Initialize-BatchProcess --
+function Initialize-BatchProcess ([int] $Size = 30, [scriptblock] $OnProcess) {
+
+    $Batch = [PSCustomObject] @{
+        Size      = $Size
+        OnProcess = $OnProcess
+
+        Number    = 0
+        Items     = [System.Collections.Generic.List[PSCustomObject]]::new($Size)
+    }
+
+    $Batch = $Batch | Add-Member -Name 'ForEachItem' -Value {
+
+        param([PSCustomObject] $Item)
+
+        $this.Items.Add($Item)
+
+        if ($this.Items.Count -ge $this.Size) {
+            $this.FlushItems()
+        }
+    }
+
+    $Batch = $Batch | Add-Member -Name 'FlushItems' -Value {
+
+        if ($this.Items.Count -ge 0) {
+
+            $this.Number++
+
+            $global:Logging.Info_ScriptInvokedForBatch($this.Number, $this.Items.Count)
+            $this.OnProcess.Invoke($this.Number, $this.Items)
+
+            $this.Items.Clear()
+        }
+    }
+
+    return $Batch
+}
+#endregion
+
+
+
+#region -- Declare: Initialize-Search --
+function Initialize-Search ([int] $StartFromPageNr = 1) {
 
     $Search = [PSCustomObject] @{
 
@@ -186,8 +227,6 @@ function New-Search ([int] $StartFromPageNr = 1) {
 }
 #endregion
 
-
-
 #region -- Declare: Get-TargetInfoFromSourceUri --
 function Get-TargetInfoFromSourceUri {
 
@@ -199,7 +238,8 @@ function Get-TargetInfoFromSourceUri {
     )
 
     process {
-        if ($SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
+        if ($SourceUri -match '^http(s)?:/' -and
+            $SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
 
             $parsed = @{
                 dir  = $Matches.DIR
@@ -294,65 +334,30 @@ function Save-TargetFileFromArchiveSite {
 }
 #endregion
 
-#region -- Declare: Invoke-ScriptForEachBatch --
-function Invoke-ScriptForEachBatch {
 
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [PSCustomObject] $SourceItem,
 
-        [Parameter(Mandatory)]
-        [int] $BatchSize,
+$BatchProc = Initialize-BatchProcess -Size 30 -OnProcess {
 
-        [Parameter(Mandatory)]
-        [scriptblock] $TargetScript
-    )
+    param([int] $BatchNr, [object[]] $BatchedItems)
 
-    begin {
-        $Batch = [PSCustomObject] @{
-            Index = 0
-            Items = [System.Collections.Generic.List[PSCustomObject]]::new($BatchSize)
-        }
-    }
-
-    process {
-        $Batch.Items.Add($SourceItem)
-
-        if ($Batch.Items.Count -ge $BatchSize) {
-
-            $Logging.Info_ScriptInvokedForBatch($Batch.Index, $Batch.Items.Count)
-            $TargetScript.Invoke($Batch.Index, $Batch.Items)
-
-            $Batch.Index++
-            $Batch.Items = [System.Collections.Generic.List[PSCustomObject]]::new($BatchSize)
-        }
-    }
-
-    end {
-        if ($BatchedItems.Count) {
-
-            $Logging.Info_ScriptInvokedForBatch($Batch.Index, $Batch.Items.Count)
-            $TargetScript.Invoke($Batch.Index, $Batch.Items)
-        }
-    }
+    git add --all
+    git commit -m "Added batch #$BatchNr of policy-docs (total: $($BatchedItems.Count)"
+    git push
 }
-#endregion
+
 
 
 $Logging.Info_StartedDownloadingAllFiles()
-$Search = New-Search -StartFromPageNr 1
+$Search = Initialize-Search -StartFromPageNr 1
 
-@(while (-not $Search.HasFinishedPages) {
-        $Search.GetResultsFromNextPage() 
-    }) |
-    Where-Object href -Match '^http(s)?:/' |
-    Get-TargetInfoFromSourceUri |
-    Save-TargetFileFromArchiveSite |
-    Invoke-ScriptForEachBatch -BatchSize 30 -TargetScript {
+while (-not $Search.HasFinishedPages) {
 
-        param([int] $BatchIndex, [object[]] $BatchItems)
+    $Search.GetResultsFromNextPage() |
+        Get-TargetInfoFromSourceUri |
+        Save-TargetFileFromArchiveSite |
+        ForEach-Object {
+            $BatchProc.ForEachItem($PSItem)
+        }
+}
 
-        git add --all
-        git commit -m "Added batch #$BatchIndex of policy-docs (total: $($BatchItems.Count)"
-    }
+$BatchProc.FlushItems()
