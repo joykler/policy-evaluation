@@ -246,9 +246,18 @@ function Get-TargetInfoFromSourceUri {
     }
 
     process {
-        if ($SourceUri -match '^http(s)?:/' -and
-            $SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
+        if ($SourceUri -notmatch '^http(s)?:/') {
+            return
+        }
 
+        $SourceUri = $SourceUri -replace '[\+]+', '-'
+        $SourceUri = $SourceUri -replace '[\-]+', '-'
+
+        if ($SourceUri -ne $PSBoundParameters.'SourceUri') {
+            return
+        }
+
+        if ($SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
             $parsed = @{
                 dir  = $Matches.DIR
                 file = $Matches.FILE
@@ -350,28 +359,35 @@ function Save-TargetFileFromArchiveSite {
 
 
 
-$BatchProc = Initialize-BatchProcess -Size 100 -OnProcess {
+try {
+    Push-Location "$PSScriptRoot\.." # Set to repo root
 
-    param([int] $BatchNr, [object[]] $BatchedItems)
+    $BatchProc = Initialize-BatchProcess -Size 100 -OnProcess {
 
-    git add --all
-    git commit -m "Added batch #$BatchNr of policy-docs (total: $($BatchedItems.Count)"
-    git push
+        param([int] $BatchNr, [object[]] $BatchedItems)
+
+        git add --all
+        git commit -m "Added batch #$BatchNr of policy-docs (total: $($BatchedItems.Count)"
+        git push
+    }
+
+
+
+    $Logging.Info_StartedDownloadingAllFiles()
+    $Search = Initialize-Search -StartFromPageNr 1
+
+    while (-not $Search.HasFinishedPages) {
+
+        $Search.GetResultsFromNextPage() |
+            Get-TargetInfoFromSourceUri |
+            Save-TargetFileFromArchiveSite |
+            ForEach-Object {
+                $BatchProc.ForEachItem($PSItem)
+            }
+    }
+
+    $BatchProc.FlushItems()
+
+} finally {
+    Pop-Location
 }
-
-
-
-$Logging.Info_StartedDownloadingAllFiles()
-$Search = Initialize-Search -StartFromPageNr 1
-
-while (-not $Search.HasFinishedPages) {
-
-    $Search.GetResultsFromNextPage() |
-        Get-TargetInfoFromSourceUri |
-        Save-TargetFileFromArchiveSite |
-        ForEach-Object {
-            $BatchProc.ForEachItem($PSItem)
-        }
-}
-
-$BatchProc.FlushItems()
