@@ -243,6 +243,8 @@ function Get-TargetInfoFromSourceUri {
                 return $('{0}-{1:X8}' -f $Uncut, $Chopped.GetHashCode())
             }
         }
+
+        $repo_root = "$(Get-Location)"
     }
 
     process {
@@ -276,11 +278,9 @@ function Get-TargetInfoFromSourceUri {
             $file_extn = [System.IO.Path]::GetExtension($file_name)
             $file_base = [System.IO.Path]::GetFileNameWithoutExtension($file_name)
 
+
+
             $dir_relpath = $changed.Dir -replace "/$([regex]::Escape($file_base))", ''
-
-            $file_base = Limit-Path $file_base
-            $file_name = $file_base + $file_extn
-
             $dir_relpath = Limit-Path $dir_relpath
             $dir_abspath = Join-Path $PSScriptRoot -ChildPath 'Archive' -AdditionalChildPath $dir_relpath
 
@@ -289,9 +289,17 @@ function Get-TargetInfoFromSourceUri {
                 AbsPath = $dir_abspath
             }
 
+
+
+            $file_base = Limit-Path $file_base
+            $file_name = $file_base + $file_extn
+            $file_path = Join-Path $dir_abspath -ChildPath $file_name
+
+
             $TargetFile = [PSCustomObject] @{
                 Name    = $file_name
-                AbsPath = Join-Path $dir_abspath -ChildPath $file_name
+                RelPath = [System.IO.Path]::GetRelativePath($repo_root, $file_path)
+                AbsPath = $file_path
             }
 
             return [PSCustomObject] @{
