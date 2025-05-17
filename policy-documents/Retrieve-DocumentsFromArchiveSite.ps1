@@ -25,6 +25,19 @@ $global:Logging = [PSCustomObject]::new()
         $global:Logging = $global:Logging | Add-Member -Name $Name -Value $Method
     }
 
+
+
+    Add-LoggingMethod 'Info_BatchProcessInvoked' -Method {
+
+        param([int] $BatchNr, [int] $BatchedItems)
+
+        $S = $PSStyle.Foreground.BrightBlue + $PSStyle.Bold
+        $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
+        $R = $PSStyle.Reset
+
+        Write-Information $($S + " ! Batch process invoked: $F [BatchNr: $BatchNr; BatchedItems: $BatchedItems]..." + $R)
+    }
+
     Add-LoggingMethod 'Info_StartedDownloadingAllFiles' -Method {
 
         $S = $PSStyle.Foreground.BrightWhite + $PSStyle.Bold + $PSStyle.Italic
@@ -40,18 +53,7 @@ $global:Logging = [PSCustomObject]::new()
         $S = $PSStyle.Foreground.White + $PSStyle.Italic
         $R = $PSStyle.Reset
 
-        Write-Information $("`n`n`n$S - Search[$MaximumPageNr] => Got results from page $CurrentPageNr" + $R)
-    }
-
-    Add-LoggingMethod 'Info_PathDetermined' -Method {
-
-        param([string] $dir_relpath, [string] $file)
-
-        $S = $PSStyle.Foreground.BrightCyan + $PSStyle.Bold
-        $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
-        $R = $PSStyle.Reset
-
-        Write-Information $($S + " * Path determined: $F[ $($dir_relpath.Length) ]> $($file.Length)" + $R)
+        Write-Information $("`n$S - Search[$MaximumPageNr] => Got results from page $CurrentPageNr" + $R)
     }
 
     Add-LoggingMethod 'Info_FileDownloaded' -Method {
@@ -85,17 +87,6 @@ $global:Logging = [PSCustomObject]::new()
         Write-Warning $($S + " ! Connection error: $F retrying after sleep..." + $R)
     }
 
-    Add-LoggingMethod 'Info_ScriptInvokedForBatch' -Method {
-
-        param([int] $BatchNr, [int] $BatchedItemsCount)
-
-        $S = $PSStyle.Foreground.BrightBlue + $PSStyle.Bold
-        $F = $PSStyle.Foreground.White + $PSStyle.BoldOff + $PSStyle.Italic
-        $R = $PSStyle.Reset
-
-        Write-Information $($S + " ! Script invoked: $F for batch [Index: $BatchNr; Items: $BatchedItemsCount]..." + $R)
-    }
-
 }
 #endregion
 
@@ -127,7 +118,7 @@ function Initialize-BatchProcess ([int] $Size = 30, [scriptblock] $OnProcess) {
 
             $this.Number++
 
-            $global:Logging.Info_ScriptInvokedForBatch($this.Number, $this.Items.Count)
+            $global:Logging.Info_BatchProcessInvoked($this.Number, $this.Items.Count)
             $this.OnProcess.Invoke($this.Number, $this.Items)
 
             $this.Items.Clear()
@@ -237,6 +228,23 @@ function Get-TargetInfoFromSourceUri {
         [String] $SourceUri
     )
 
+    begin {
+        function Limit-Path([string] $Path, [int] $MaxLength = 120) {
+
+            if (-not $Path -or $Path.Length -le $MaxLength) {
+                return $Path
+
+            } else {
+                $ChopPosition = $MaxLength - 9 # ~ char + 8 Hex chars => hashcode of chopped part
+
+                $Uncut = $Path.Substring(0, $ChopPosition)
+                $Chopped = $Path.Substring($ChopPosition)
+
+                return $('{0}-{1:X8}' -f $Uncut, $Chopped.GetHashCode())
+            }
+        }
+    }
+
     process {
         if ($SourceUri -match '^http(s)?:/' -and
             $SourceUri -match 'https://www\.rijksoverheid\.nl/binaries/rijksoverheid/documenten/(?<DIR>.*)/(?<File>.*)$') {
@@ -255,10 +263,17 @@ function Get-TargetInfoFromSourceUri {
             }
 
             $file_name = $changed.File
+
+            $file_extn = [System.IO.Path]::GetExtension($file_name)
             $file_base = [System.IO.Path]::GetFileNameWithoutExtension($file_name)
 
             $dir_relpath = $changed.Dir -replace "/$([regex]::Escape($file_base))", ''
-            $dir_abspath = Join-Path "\\?\$PSScriptRoot\Archive" -ChildPath $dir_relpath
+
+            $file_base = Limit-Path $file_base
+            $file_name = $file_base + $file_extn
+
+            $dir_relpath = Limit-Path $dir_relpath
+            $dir_abspath = Join-Path $PSScriptRoot -ChildPath 'Archive' -AdditionalChildPath $dir_relpath
 
             $TargetDir = [PSCustomObject] @{
                 RelPath = $dir_relpath
@@ -270,7 +285,6 @@ function Get-TargetInfoFromSourceUri {
                 AbsPath = Join-Path $dir_abspath -ChildPath $file_name
             }
 
-            $Logging.Info_PathDetermined($dir_relpath, $file_name)
             return [PSCustomObject] @{
                 SourceUri  = $SourceUri
                 TargetDir  = $TargetDir
@@ -336,7 +350,7 @@ function Save-TargetFileFromArchiveSite {
 
 
 
-$BatchProc = Initialize-BatchProcess -Size 30 -OnProcess {
+$BatchProc = Initialize-BatchProcess -Size 100 -OnProcess {
 
     param([int] $BatchNr, [object[]] $BatchedItems)
 
