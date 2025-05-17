@@ -295,7 +295,6 @@ function Get-TargetInfoFromSourceUri {
             $file_name = $file_base + $file_extn
             $file_path = Join-Path $dir_abspath -ChildPath $file_name
 
-
             $TargetFile = [PSCustomObject] @{
                 Name    = $file_name
                 RelPath = [System.IO.Path]::GetRelativePath($repo_root, $file_path)
